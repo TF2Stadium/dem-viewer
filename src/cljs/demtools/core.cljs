@@ -25,12 +25,11 @@
          :count 0
          :file/results ""}))
 
-(js/console.log "hi")
 (def w (js/Worker. "js/compiled/demtools-worker.js"))
 (set! (.-onmessage w)
       (fn [& e] (js/console.log "received" e)))
 (.postMessage w "hi guy")
-(js/console.log "hi" w)
+
 
 (defmulti read (fn [& args] (namespace (apply om/dispatch args))))
 (defn direct-read [state k] {:value (get @state k nil)})
