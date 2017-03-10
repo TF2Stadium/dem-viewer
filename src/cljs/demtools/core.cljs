@@ -70,7 +70,7 @@
                (let [buf (.-result fr)
                      dem (js/tf2demo.Demo. buf)
                      parser (.getParser dem)
-                     packets (js/Array. 20000)
+                     packets (js/Array. 50000)
                      idx (atom 0)]
                  (.on parser "packet"
                       #(do (aset packets @idx %) (swap! idx inc)))
@@ -80,7 +80,7 @@
                  (when (< @idx (.-length packets))
                    (set! (.-length packets) @idx))
 
-                 (let [p (js->clj (.slice packets 0 5000))
+                 (let [p (js->clj packets)
                        x (js/console.log "done converting" (count p))]
                    (cb {:file/results (str "some file contents: "
                                            (.-name file)
@@ -169,8 +169,7 @@
           (dom/div nil (js/JSON.stringify (clj->js packet))))
         (when packets
           (dom/p nil
-                 (str "Loaded " packets-count " packets. Displaying: "
-                      (count packets))))
+                 (str "Loaded " packets-count " packets.")))
         (when file (file-view this results))
         (when file
           (jsx Table
