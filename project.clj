@@ -5,7 +5,7 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :dependencies [[org.clojure/clojure "1.8.0"]
-                 [org.clojure/clojurescript "1.9.494" :scope "provided"]
+                 [org.clojure/clojurescript "1.9.473" :scope "provided"]
                  [org.clojure/core.async "0.3.441"]
                  [com.cognitect/transit-clj "0.8.297"]
                  [ring "1.5.0"]
@@ -61,6 +61,7 @@
                 :source-map-timestamp true
                 :language-in :ecmascript5
                 :language-out :ecmascript5
+                :externs ["demojs-externs.js"]
                 :foreign-libs [{:file "src/js/demo-rollup.js"
                                 :provides ["tf2demo"]}]}}
 
@@ -77,6 +78,7 @@
                 :pretty-print false
                 :language-in :ecmascript5
                 :language-out :ecmascript5
+                :externs ["demojs-externs.js"]
                 :foreign-libs [{:file "src/js/demo-rollup.js"
                                 :provides ["tf2demo"]}]}}
 
@@ -87,6 +89,7 @@
                 :optimizations :none
                 :language-in :ecmascript5
                 :language-out :ecmascript5
+                :externs ["demojs-externs.js"]
                 :foreign-libs [{:file "src/js/demo-rollup.js"
                                 :provides ["tf2demo"]}]}}
 
@@ -101,6 +104,7 @@
                 :pretty-print false
                 :language-in :ecmascript5
                 :language-out :ecmascript5
+                :externs ["demojs-externs.js"]
                 :foreign-libs [{:file "src/js/demo-rollup.js"
                                 :provides ["tf2demo"]}]}}
 
@@ -115,6 +119,7 @@
                 :pretty-print false
                 :language-in :ecmascript5
                 :language-out :ecmascript5
+                :externs ["demojs-externs.js"]
                 :foreign-libs [{:file "src/js/demo-rollup.js"
                                 :provides ["tf2demo"]}]}}]}
 
