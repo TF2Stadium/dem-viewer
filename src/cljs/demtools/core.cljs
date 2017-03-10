@@ -35,8 +35,9 @@
 (defn direct-read [state k] {:value (get @state k nil)})
 (defmethod read nil [{:keys [state] :as env} k] (direct-read state k))
 (defmethod read "file"
-  [{:keys [state ast] :as env} k {:keys [file offset limit]}]
+  [{:keys [state ast] :as env} k {:keys [idx file offset limit]}]
   (case k
+    :file/packet (when idx {:value (get (get @state :packets []) idx)})
     :file/packets
     {:value (->> (get @state :packets []) (drop offset) (take limit) vec)}
 
@@ -119,7 +120,8 @@
 (defmethod packet-view "netTick" [p]
   (str "Tick: " (p "tick") " frameTime: " (p "frameTime")
        " stdDev: " (p "stdDev")))
-(defmethod packet-view "gameEvent" [p] (p "event"))
+(defmethod packet-view "gameEvent" [p]
+  (-> (p "event") clj->js js/JSON.stringify))
 ;; (defmethod packet-view "serverInfo" [p]
 ;;   (str "frameTime: " (p "frameTime") " stdDev: " (p "stdDev")))
 (defmethod packet-view "consoleCmd" [p] (p "command"))
@@ -145,23 +147,26 @@
 
 (defui RootComponent
   static om/IQueryParams
-  (params [_] {:file nil :offset 0 :limit 50})
+  (params [_] {:file nil :idx nil :offset 0 :limit 50})
   static om/IQuery
   (query [this]
          '[:title
+           (:file/packet {:idx ?idx})
            (:file/packets {:offset ?offset :limit ?limit})
            :file/packets-count
            :file/results
            (:file/file {:file/file ?file})])
   Object
   (render [this]
-    (let [{:keys [results title file/packets file/packets-count]}
+    (let [{:keys [results title file/packet file/packets file/packets-count]}
           (om/props this)
           {:keys [offset file]} (om/get-params this)]
       (dom/div nil
         (dom/h1 nil title)
         (dom/p nil results)
         (file-upload this)
+        (when packet
+          (dom/div nil (js/JSON.stringify (clj->js packet))))
         (when packets
           (dom/p nil
                  (str "Loaded " packets-count " packets. Displaying: "
@@ -175,9 +180,12 @@
                     :onScrollEnd
                     (fn [x y]
                       (let [new-offset (max 0 (- (int (/ y 32)) 10))]
-                        (println y new-offset)
                         (om/update-query!
                          this #(assoc-in % [:params :offset] new-offset))))
+                    :onRowClick
+                    (fn [_ new-idx]
+                      (om/update-query!
+                       this #(assoc-in % [:params :idx] new-idx)))
                     :width 800
                     :height 800}
                (jsx Column
