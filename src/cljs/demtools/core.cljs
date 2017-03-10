@@ -165,8 +165,6 @@
         (dom/h1 nil title)
         (dom/p nil results)
         (file-upload this)
-        (when packet
-          (dom/div nil (js/JSON.stringify (clj->js packet))))
         (when packets
           (dom/p nil
                  (str "Loaded " packets-count " packets.")))
@@ -194,12 +192,13 @@
                (jsx Column
                     #js {:width (- 800 150)
                          :header (jsx Cell #js {} "Data")
-                         :cell (data-cell offset packets)})))))))
+                         :cell (data-cell offset packets)})))
+        (when packet
+          (dom/div nil (js/JSON.stringify (clj->js packet))))))))
 
 
 (def root (om/factory RootComponent))
 
 (om/add-root! reconciler RootComponent (gdom/getElement "app"))
-
 
 (defn on-figwheel-reload [& args] (println "Figwheel reloaded!" args))
