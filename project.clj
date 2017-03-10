@@ -5,7 +5,8 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :dependencies [[org.clojure/clojure "1.8.0"]
-                 [org.clojure/clojurescript "1.9.293" :scope "provided"]
+                 [org.clojure/clojurescript "1.9.494" :scope "provided"]
+                 [org.clojure/core.async "0.3.441"]
                  [com.cognitect/transit-clj "0.8.297"]
                  [ring "1.5.0"]
                  [ring/ring-defaults "0.2.1"]
@@ -17,10 +18,14 @@
                  [org.danielsz/system "0.4.0"]
                  [org.clojure/tools.namespace "0.2.11"]
                  [http-kit "2.2.0"]
-                 [org.omcljs/om "1.0.0-alpha47"]]
+                 [org.omcljs/om "1.0.0-alpha47"]
+                 [cljsjs/fixed-data-table "0.6.3-0"]]
 
   :plugins [[lein-cljsbuild "1.1.5"]
+            [lein-npm "0.6.2"]
             [lein-environ "1.1.0"]]
+
+  :npm {:dependencies [["tf2-demo" "1.0.2"]]}
 
   :min-lein-version "2.6.1"
 
@@ -40,35 +45,78 @@
   ;; (browser-repl) live.
   :repl-options {:init-ns user}
 
-  :cljsbuild {:builds
-              [{:id "app"
-                :source-paths ["src/cljs" "src/cljc"]
+  :cljsbuild
+  {:builds
+   [{:id "app"
+     :watch-paths ["src/cljs" "src/cljc"]
+     :source-paths ["src/cljs" "src/cljc"]
 
-                :figwheel true
-                ;; Alternatively, you can configure a function to run every time figwheel reloads.
-                ;; :figwheel {:on-jsload "demtools.core/on-figwheel-reload"}
+     :figwheel true
+     ;;{:on-jsload "demtools.core/on-figwheel-reload"}
 
-                :compiler {:main demtools.core
-                           :asset-path "js/compiled/out"
-                           :output-to "resources/public/js/compiled/demtools.js"
-                           :output-dir "resources/public/js/compiled/out"
-                           :source-map-timestamp true}}
+     :compiler {:main demtools.core
+                :asset-path "js/compiled/out"
+                :output-to "resources/public/js/compiled/demtools.js"
+                :output-dir "resources/public/js/compiled/out"
+                :source-map-timestamp true
+                :language-in :ecmascript5
+                :language-out :ecmascript5
+                :foreign-libs [{:file "src/js/demo-rollup.js"
+                                :provides ["tf2demo"]}]}}
 
-               {:id "test"
-                :source-paths ["src/cljs" "test/cljs" "src/cljc" "test/cljc"]
-                :compiler {:output-to "resources/public/js/compiled/testable.js"
-                           :main demtools.test-runner
-                           :optimizations :none}}
+    {:id "app-worker"
+     :watch-paths ["src/cljs" "src/cljc"]
+     :source-paths ["src/cljs" "src/cljc"]
 
-               {:id "min"
-                :source-paths ["src/cljs" "src/cljc"]
-                :jar true
-                :compiler {:main demtools.core
-                           :output-to "resources/public/js/compiled/demtools.js"
-                           :output-dir "target"
-                           :source-map-timestamp true
-                           :optimizations :advanced
-                           :pretty-print false}}]}
+     :compiler {:main demtools.worker
+                :asset-path "js/compiled/out"
+                :output-to "resources/public/js/compiled/demtools-worker.js"
+                :output-dir "resources/public/js/compiled/out-worker"
+                :source-map-timestamp true
+                :optimizations :advanced
+                :pretty-print false
+                :language-in :ecmascript5
+                :language-out :ecmascript5
+                :foreign-libs [{:file "src/js/demo-rollup.js"
+                                :provides ["tf2demo"]}]}}
+
+    {:id "test"
+     :source-paths ["src/cljs" "test/cljs" "src/cljc" "test/cljc"]
+     :compiler {:output-to "resources/public/js/compiled/testable.js"
+                :main demtools.test-runner
+                :optimizations :none
+                :language-in :ecmascript5
+                :language-out :ecmascript5
+                :foreign-libs [{:file "src/js/demo-rollup.js"
+                                :provides ["tf2demo"]}]}}
+
+    {:id "min"
+     :source-paths ["src/cljs" "src/cljc"]
+     :jar true
+     :compiler {:main demtools.core
+                :output-to "resources/public/js/compiled/demtools.js"
+                :output-dir "target/min/"
+                :source-map-timestamp true
+                :optimizations :advanced
+                :pretty-print false
+                :language-in :ecmascript5
+                :language-out :ecmascript5
+                :foreign-libs [{:file "src/js/demo-rollup.js"
+                                :provides ["tf2demo"]}]}}
+
+    {:id "min-worker"
+     :source-paths ["src/cljs" "src/cljc"]
+     :jar true
+     :compiler {:main demtools.worker
+                :output-to "resources/public/js/compiled/demtools-worker.js"
+                :output-dir "target/min-worker/"
+                :source-map-timestamp true
+                :optimizations :advanced
+                :pretty-print false
+                :language-in :ecmascript5
+                :language-out :ecmascript5
+                :foreign-libs [{:file "src/js/demo-rollup.js"
+                                :provides ["tf2demo"]}]}}]}
 
   ;; When running figwheel from nREPL, figwheel will read this configuration
   ;; stanza, but it will read it without passing through leiningen's profile
@@ -100,14 +148,14 @@
   :doo {:build "test"}
 
   :profiles {:dev
-             {:dependencies [[figwheel "0.5.8"]
-                             [figwheel-sidecar "0.5.8"]
+             {:dependencies [[figwheel "0.5.9"]
+                             [figwheel-sidecar "0.5.9"]
                              [com.cemerick/piggieback "0.2.1"]
                              [org.clojure/tools.nrepl "0.2.12"]
                              [lein-doo "0.1.7"]
                              [reloaded.repl "0.2.3"]]
 
-              :plugins [[lein-figwheel "0.5.8"]
+              :plugins [[lein-figwheel "0.5.9"]
                         [lein-doo "0.1.7"]]
 
               :source-paths ["dev"]
@@ -116,7 +164,8 @@
              :uberjar
              {:source-paths ^:replace ["src/clj" "src/cljc"]
               :prep-tasks ["compile"
-                           ["cljsbuild" "once" "min"]]
+                           ["cljsbuild" "once" "min"]
+                           ["cljsbuild" "once" "min-worker"]]
               :hooks []
               :omit-source true
               :aot :all}})
