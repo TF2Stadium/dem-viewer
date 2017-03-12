@@ -5,6 +5,7 @@
             [clojure.string :as str]
             [cljs.core.async :as async :refer [<! >! put! chan]]
             [cljsjs.fixed-data-table]
+            [demtools.helpers :refer [plainify]]
             [tf2demo])
   (:require-macros
    [cljs.core.async.macros :as asyncm :refer [go go-loop]]))
@@ -73,7 +74,10 @@
                      packets (js/Array. 50000)
                      idx (atom 0)]
                  (.on parser "packet"
-                      #(do (aset packets @idx %) (swap! idx inc)))
+                      #(let [i @idx]
+                         (when (< i 3000)
+                           (aset packets @idx (plainify %))
+                           (swap! idx inc))))
                  (.readHeader parser)
                  (.parseBody parser)
 
@@ -122,6 +126,16 @@
        " stdDev: " (p "stdDev")))
 (defmethod packet-view "gameEvent" [p]
   (-> (p "event") clj->js js/JSON.stringify))
+(defmethod packet-view "packetEntities" [p]
+  (js/console.log ((get p "entities") 0))
+  (->> (p "entities")
+       (mapv (fn [ent]
+               (str (aget ent "entityIndex")
+                    "-" (get-in ent ["serverClass" "name"] nil)
+                    "-" (count (get ent "props" []))
+                    )))
+       (str/join "; ")
+       ))
 ;; (defmethod packet-view "serverInfo" [p]
 ;;   (str "frameTime: " (p "frameTime") " stdDev: " (p "stdDev")))
 (defmethod packet-view "consoleCmd" [p] (p "command"))
