@@ -3,7 +3,7 @@
             [om.dom :as dom]
             [goog.dom :as gdom]
             [clojure.string :as str]
-            [cljs.core.async :as async :refer [<! >! put! chan]]
+            [cljs.core.async :as async :refer [close! <! >! put! chan]]
             [cljsjs.fixed-data-table]
             [demtools.demo]
             [tf2demo])
@@ -22,7 +22,7 @@
 
 (def app-state
   (atom {:title "Hello Chestnut!"
-         :packets []
+         :packets nil
          :count 0
          :file/results ""}))
 
@@ -34,16 +34,22 @@
 
 (defmulti read (fn [& args] (namespace (apply om/dispatch args))))
 (defn direct-read [state k] {:value (get @state k nil)})
-(defmethod read nil [{:keys [state] :as env} k] (direct-read state k))
+(defmethod read nil [{:keys [state] :as env} k {:keys [idx file offset limit]}]
+  (case k
+    :packets
+    {:value (->> (or (get @state :packets []) [])
+                 (drop offset)
+                 (take limit)
+                 vec)}
+
+    :packet (when idx {:value (get (get @state :packets []) idx)})
+    :packets-count {:value (count (get @state :packets))}
+
+    (direct-read state k)))
 (defmethod read "file"
   [{:keys [state ast] :as env} k {:keys [idx file offset limit]}]
   (case k
-    :file/packet (when idx {:value (get (get @state :packets []) idx)})
-    :file/packets
-    {:value (->> (get @state :packets []) (drop offset) (take limit) vec)}
-
-    :file/packets-count {:value (count (get @state :packets))}
-    :file/results {:value (count (get @state :file/results))}
+    :file/results
     :file/file
     (let [old-file (get @state k :not-loaded)]
       (merge {:value old-file}
@@ -59,49 +65,149 @@
             query (get-in file [:params :file/file])]
         (put! c [query cb])))))
 
-(defn process-loop [c]
-  (go-loop [current-file nil]
-    (let [[file cb] (<! c)]
-      (when (not= file current-file)
-        (when file
-          (let [fr (js/FileReader.)]
-            (set!
-             (.-onload fr)
-             (fn []
-               (let [buf (.-result fr)
-                     dem (js/tf2demo.Demo. buf)
-                     parser (.getParser dem)
-                     packets (js/Array. 50000)
-                     idx (atom 0)]
-                 (.on parser "packet"
-                      #(let [i @idx]
-                         (when (< i 3000)
-                           (aset packets @idx %)
-                           (swap! idx inc))))
-                 (.readHeader parser)
-                 (.parseBody parser)
+(defn setImmediate [fn] (js/setTimeout fn 1000))
 
-                 (when (< @idx (.-length packets))
-                   (set! (.-length packets) @idx))
+;; parse the next message, return a list of packets; or nil if we're done
+(defn parse-1 [parser]
+  ;; from Parser.tick
+  (let [msg (.readMessage parser (.-stream parser) (.-match parser))]
+    ;; from Parser.handleMessage:
+    (when msg
+      (let [packets (when (.-parse msg) (.parse msg))]
+        (doseq [p packets] (.emit parser "packet" p))
+        packets))))
 
-                 (let [p (js->clj packets)
-                       x (js/console.log "done converting" (count p))]
-                   (cb {:file/results (str "some file contents: "
-                                           (.-name file)
-                                           (.-byteLength buf)
-                                           " "
-                                           (.-length packets))
-                        :packets p})))))
-            (.readAsArrayBuffer fr file)))
-        (cb {:file/results
-             (str "some file contents: " (when file (.-name file)))}))
-      (recur file))))
+;; parse the next messages to get at least n packets (may return more than
+;; the requested n packets), or until end of parser
+(defn parse-n [parser n]
+  (let [chunk (js/Array. n)
+        idx (atom 0)
+        real-len
+        (loop []
+          (let [packets (parse-1 parser)]
+            (doseq [p packets]
+              (aset chunk @idx p)
+              (swap! idx inc))
+            (if (and packets (< @idx n))
+              (recur)
+              @idx)))]
+    (js/console.log n real-len)
+    (set! (.-length chunk) real-len)
+    chunk))
+
+(def ^:private parse-chunk-size 500)
+(defn parse-loop-async [parser output-chan]
+  (let [packets (parse-n parser parse-chunk-size)]
+    (when packets
+      (put! output-chan packets
+            (fn [result]
+              (when result
+                (setImmediate #(parse-loop-async parser output-chan))))))))
+
+;; demo -> channel of packets
+(defn parse [file]
+  (let [output (chan)
+        fr (js/FileReader.)]
+
+    (set!
+     (.-onload fr)
+     (fn []
+       (let [buf (.-result fr)
+             demo (js/tf2demo.Demo. buf)
+             parser (.getParser demo)
+             header (.readHeader parser)]
+         (js/console.log header)
+         (parse-loop-async parser output))))
+
+    (.readAsArrayBuffer fr file)
+    output))
+
+;; (defn process-loop [c]
+;;   (go-loop [current-file nil]
+;;     (let [[file cb] (<! c)]
+;;       (when (not= file current-file)
+;;         (when file
+;;           (let [fr (js/FileReader.)]
+;;             (set!
+;;              (.-onload fr)
+;;              (fn []
+;;                (let [buf (.-result fr)
+;;                      dem (js/tf2demo.Demo. buf)
+;;                      parser (.getParser dem)
+;;                      packets (js/Array. 50000)
+;;                      idx (atom 0)]
+;;                  (.on parser "packet"
+;;                       #(let [i @idx]
+;;                          (when (< i 3000)
+;;                            (aset packets @idx %)
+;;                            (swap! idx inc))))
+;;                  (.readHeader parser)
+;;                  (.parseBody parser)
+
+;;                  (when (< @idx (.-length packets))
+;;                    (set! (.-length packets) @idx))
+
+;;                  (let [p (js->clj packets)
+;;                        x (js/console.log "done converting" (count p))]
+;;                    (cb {:file/results (str "some file contents: "
+;;                                            (.-name file)
+;;                                            (.-byteLength buf)
+;;                                            " "
+;;                                            (.-length packets))
+;;                         :partial-packets p})))))
+;;             (.readAsArrayBuffer fr file)))
+;;         (cb {:file/results (str "some file contents: " (when file (.-name file)))
+;;              :packets []}))
+;;       (recur file))))
+
+(defn process-loop [control-chan]
+  (go-loop [current-cb nil
+            current-file nil
+            current-parse-chan nil
+            current-packets nil]
+    (let [[m port] (alts! (remove nil? [control-chan current-parse-chan]))]
+      (cond
+        (= port control-chan)
+        (let [[file cb] m]
+          (println "Control chan:" file)
+          (if (and file (not= file current-file))
+            (do (when current-parse-chan (close! current-parse-chan))
+                (cb {:packets []})
+                (recur cb file (when file (parse file)) []))
+            (recur current-cb current-file current-parse-chan current-packets)))
+
+        (= port current-parse-chan)
+        (do
+          (let [new-packets (into current-packets m)]
+            (current-cb {:packets new-packets})
+            (recur current-cb
+                   current-file
+                   current-parse-chan
+                   new-packets)))))))
+
+(defn combine-merge-result [a b]
+  {:keys (concat (:keys a) (:keys b))
+   :next (merge (:next a) (:next b))
+   :tempids (concat (:tempids a) (:tempids b))})
+
+(defn merge-packets [state new-packets]
+  {:keys [:packets]
+   :next (update state :packets #(vec (concat % new-packets)))})
+
+;; (defn our-merge [reconciler state novelty query]
+;;   (let [{:keys [partial-packets]} novelty
+;;         other-novelty (dissoc novelty :partial-packets)
+;;         results (om/default-merge reconciler state other-novelty query)]
+;;     (if partial-packets
+;;       (combine-merge-result results (merge-packets state partial-packets))
+;;       results)))
 
 (def reconciler
   (om/reconciler
    {:state app-state
     :parser (om/parser {:read read :mutate mutate})
     :send (send-to-chan send-chan)
+    ;;    :merge our-merge
     :remotes [:file]}))
 (process-loop send-chan)
 
@@ -164,14 +270,14 @@
   static om/IQuery
   (query [this]
          '[:title
-           (:file/packet {:idx ?idx})
-           (:file/packets {:offset ?offset :limit ?limit})
-           :file/packets-count
+           (:packet {:idx ?idx})
+           (:packets {:offset ?offset :limit ?limit})
+           :packets-count
            :file/results
            (:file/file {:file/file ?file})])
   Object
   (render [this]
-    (let [{:keys [results title file/packet file/packets file/packets-count]}
+    (let [{:keys [results title packet packets packets-count]}
           (om/props this)
           {:keys [offset file]} (om/get-params this)]
       (dom/div nil
@@ -182,7 +288,7 @@
           (dom/p nil
                  (str "Loaded " packets-count " packets.")))
         (when file (file-view this results))
-        (when file
+        (when packets
           (jsx Table
                #js {:rowHeight 32
                     :headerHeight 32
