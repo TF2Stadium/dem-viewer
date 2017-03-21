@@ -5,6 +5,13 @@
 var Header = {};
 
 /**
+ * @nosideeffects
+ * @constructor
+ */
+var MessageParser = function(){};
+MessageParser.prototype.parse = function(){};
+
+/**
  * @constructor
  */
 var Demo = function(){};
@@ -18,6 +25,8 @@ Demo.prototype.getParser = function(demo){};
  * @constructor
  */
 var Parser = function(){};
+Parser.prototype.stream = {};
+Parser.prototype.match = {};
 
 /**
  * @return {Parser}
@@ -29,7 +38,13 @@ Parser.prototype.on = function(name, fn){};
  */
 Parser.prototype.readHeader = function(){};
 
+/**
+ * @return {MessageParser}
+ */
+Parser.prototype.readMessage = function(){};
+
 Parser.prototype.parseBody = function(){};
+Parser.prototype.emit = function(){};
 
 var SendPropDefinition = {};
 var SendPropFlag = {};
@@ -39,9 +54,10 @@ var Match = {};
 var Player = {};
 var PlayerCondition = {};
 var GameEvent = {};
-var PacketEntity = {};
-var SendProp = {};
 var Vector = {};
 var World = {};
 var UserInfo = {};
 var Packet = {};
+var PacketEntity = function(){};
+var SendProp = function(){};
+var ServerClass = function(){};
