@@ -175,28 +175,29 @@
   (when file
     (dom/div nil (str "File loaded: " (.-name file)))))
 
-(defmulti packet-view (fn [p] (aget p "packetType" :default)))
-(defmethod packet-view :default [p] (str/join ", " (js/Object.keys p)))
-(defmethod packet-view "setConVar" [p]
-  (->> (aget p "vars") js/Object.entries (map (fn [[k v]] (str k "=\"" v "\""))) (str/join " ")))
-(defmethod packet-view "netTick" [p]
-  (str "Tick: " (p "tick") " frameTime: " (p "frameTime")
-       " stdDev: " (p "stdDev")))
-(defmethod packet-view "gameEvent" [p]
-  (-> (aget p "event") js/JSON.stringify))
-;; (defmethod packet-view "packetEntities" [p]
-;;   (->> (p "entities")
-;;        (mapv (fn [ent]
-;;                (str (ent "entityIndex")
-;;                     "-" (get-in ent ["serverClass" "name"] nil)
-;;                     "-" (count (get ent "props" []))
-;;                     )))
-;;        (str/join "; ")
-;;        ))
-;; (defmethod packet-view "serverInfo" [p]
-;;   (str "frameTime: " (p "frameTime") " stdDev: " (p "stdDev")))
-(defmethod packet-view "consoleCmd" [p] (aget p "command"))
-(defmethod packet-view "print" [p] (aget p "value"))
+(defn packet-view [p]
+  (case (.-packetType p)
+    "setConVar"
+    (->> (.-vars p)
+         js/Object.entries
+         (map (fn [[k v]] (str k "=\"" v "\"")))
+         (str/join " "))
+
+    "netTick"
+    (str "Tick: " (.-tick p)
+         " frameTime: " (.-frameTime p)
+         " stdDev: " (.-stdDev p))
+
+    "gameEvent"
+    (-> (aget p "event") js/JSON.stringify)
+
+    "consoleCmd"
+    (aget p "command")
+
+    "print"
+    (aget p "value")
+
+    (str/join "; " (js/Object.keys p))))
 
 (defn packet-type-cell [offset data]
   (fn [props-js]
@@ -235,7 +236,8 @@
 
           packets-count (count packets)
           last-idx (max 0 (dec packets-count))
-          packet (when selected-idx (nth packets (min last-idx selected-idx) nil))
+          packet (when selected-idx
+                   (nth packets (min last-idx selected-idx) nil))
           start (min offset last-idx)
           end (min (+ limit offset) last-idx)
           packets (subvec packets start end)]
