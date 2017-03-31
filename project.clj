@@ -51,8 +51,7 @@
      :watch-paths ["src/cljs" "src/cljc"]
      :source-paths ["src/cljs" "src/cljc"]
 
-     :figwheel true
-     ;;{:on-jsload "demtools.core/on-figwheel-reload"}
+     :figwheel {:on-jsload "demtools.core/on-figwheel-reload"}
 
      :compiler {:main demtools.core
                 :asset-path "js/compiled/out"
