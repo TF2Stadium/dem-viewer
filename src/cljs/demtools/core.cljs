@@ -3,9 +3,10 @@
             [om.dom :as dom]
             [goog.dom :as gdom]
             [clojure.string :as str]
-            [cljs.core.async :as async :refer [close! <! >! put! chan]]
+            [cljs.core.async :as async
+             :refer [close! <! >! put! chan pub sub]]
             [cljsjs.fixed-data-table]
-            [demtools.demo]
+            [demtools.demo :refer [parse]]
             [tf2demo])
   (:require-macros
    [cljs.core.async.macros :as asyncm :refer [go go-loop]]))
@@ -18,10 +19,10 @@
 
 (def jsx js/React.createElement)
 
-(def send-chan (chan))
-
 (def app-state
   (atom {:packets nil
+         :repl/input ""
+         :repl/output ""
          :selected-idx nil
          :count 0
          :limit 50
@@ -31,7 +32,6 @@
 (def w (js/Worker. "js/compiled/demtools-worker.js"))
 (set! (.-onmessage w)
       (fn [& e] (js/console.log "received" e)))
-(.postMessage w "hi guy")
 
 (defmulti read (fn [& args] (namespace (apply om/dispatch args))))
 (defn direct-read [state k] {:value (get @state k nil)})
@@ -49,10 +49,33 @@
     ;;     :packets-count {:value (count (get @state :packets))}
 
     (direct-read state k)))
+
+(defmethod read "repl"
+  [{:keys [state ast] :as env} k {:keys [:repl/input] :as data}]
+  (case k
+    :repl/output
+    (let [old-value (get @state k "Loading...")]
+      {:value old-value :repl ast})))
+
+(defmethod read "packets"
+  [{:keys [state ast] :as env} k {:keys [idx offset limit]}]
+  (case k
+    :packets/packet
+    {:value (nth (get @state :packets) idx)}
+
+    :packets/count
+    {:value (count (get @state :packets))}
+
+    :packets/slice
+    (let [packets (get @state :packets)]
+      {:value (subvec packets
+                      offset
+                      (min (+ offset limit) (+ offset (count packets))))})))
+
 (defmethod read "file"
   [{:keys [state ast] :as env} k {:keys [idx file offset limit]}]
   (case k
-    :file/results
+    :file/results (direct-read state k)
     :file/file
     (let [old-file (get @state k :not-loaded)]
       (merge {:value old-file}
@@ -65,72 +88,25 @@
       {:value {:keys [state-key]}
        :action #(swap! state assoc state-key value)})
 
+    #{`packets}
+    (let [state-key (-> key name keyword)]
+      {:value {:keys [state-key]}
+       :action #(swap! state assoc state-key value)})
+
     true {:value (swap! state assoc key value)}))
 
 (defn send-to-chan [c]
-  (fn [{:keys [file] :as data} cb]
+  (fn [{:keys [file repl] :as data} cb]
     (when file
       (let [{[file] :children} (om/query->ast file)
             query (get-in file [:params :file/file])]
-        (put! c [query cb])))))
+        (put! c [:file [query cb]])))
+    (when repl
+      (let [{[repl] :children} (om/query->ast repl)
+            query (get-in repl [:params :repl/input])]
+        (put! c [:repl [query cb]])))))
 
-(defn setImmediate [fn] (js/setTimeout fn 20))
-
-;; parse the next message, return a list of packets; or nil if we're done
-(defn parse-1 [parser]
-  ;; from Parser.tick
-  (let [msg (.readMessage parser (.-stream parser) (.-match parser))]
-    ;; from Parser.handleMessage:
-    (when msg
-      (let [packets (when (.-parse msg) (.parse msg))]
-        (doseq [p packets] (.emit parser "packet" p))
-        packets))))
-
-;; parse the next messages to get at least n packets (may return more than
-;; the requested n packets), or until end of parser
-(defn parse-n [parser n]
-  (let [chunk (js/Array. n)
-        idx (atom 0)
-        real-len
-        (loop []
-          (let [packets (parse-1 parser)]
-            (doseq [p packets]
-              (aset chunk @idx p)
-              (swap! idx inc))
-            (if (and packets (< @idx n))
-              (recur)
-              @idx)))]
-    (set! (.-length chunk) real-len)
-    (vec chunk)))
-
-(def ^:private parse-chunk-size 1000)
-(defn parse-loop-async [parser output-chan]
-  (let [packets (parse-n parser parse-chunk-size)]
-    (when packets
-      (put! output-chan packets
-            (fn [result]
-              (when result
-                (setImmediate #(parse-loop-async parser output-chan))))))))
-
-;; demo -> channel of packets
-(defn parse [file]
-  (let [output (chan)
-        fr (js/FileReader.)]
-
-    (set!
-     (.-onload fr)
-     (fn []
-       (let [buf (.-result fr)
-             demo (js/tf2demo.Demo. buf)
-             parser (.getParser demo)
-             header (.readHeader parser)]
-         (js/console.log header)
-         (parse-loop-async parser output))))
-
-    (.readAsArrayBuffer fr file)
-    output))
-
-(defn process-loop [control-chan]
+(defn file-process-loop [control-chan]
   (go-loop [current-cb nil
             current-file nil
             current-parse-chan nil
@@ -138,12 +114,13 @@
     (let [[m port] (alts! (remove nil? [control-chan current-parse-chan]))]
       (cond
         (= port control-chan)
-        (let [[file cb] m]
-          (if (and file (not= file current-file))
-            (do (when current-parse-chan (close! current-parse-chan))
-                (cb {:packets []})
-                (recur cb file (when file (parse file)) []))
-            (recur current-cb current-file current-parse-chan current-packets)))
+        (let [[data cb] m]
+          (let [file data]
+            (if (and file (not= file current-file))
+              (do (when current-parse-chan (close! current-parse-chan))
+                  (cb {:packets []})
+                  (recur cb file (when file (parse file)) []))
+              (recur current-cb current-file current-parse-chan current-packets))))
 
         (= port current-parse-chan)
         (do
@@ -154,14 +131,44 @@
                    current-parse-chan
                    new-packets)))))))
 
+(defn repl-process-loop [control-chan]
+  (go-loop [current-cb nil
+            current-file nil
+            current-parse-chan nil
+            current-packets nil]
+    (let [[m port] (alts! (remove nil? [control-chan current-parse-chan]))]
+      (cond
+        (= port control-chan)
+        (let [[data cb] m]
+          (recur current-cb current-file current-parse-chan current-packets))
+
+        (= port current-parse-chan)
+        (do
+          (let [new-packets (into current-packets m)]
+            (current-cb {:packets new-packets})
+            (recur current-cb
+                   current-file
+                   current-parse-chan
+                   new-packets)))))))
+
+(def send-chan (chan))
+(def router (pub send-chan first))
+
+(def repl-chan (chan 1 (map second)))
+(repl-process-loop repl-chan)
+(sub router :repl repl-chan)
+
+(def file-chan (chan 1 (map second)))
+(file-process-loop file-chan)
+(sub router :file file-chan)
+
 (def reconciler
   (om/reconciler
    {:state app-state
     :parser (om/parser {:read read :mutate mutate})
     :send (send-to-chan send-chan)
     ;;    :merge our-merge
-    :remotes [:file]}))
-(process-loop send-chan)
+    :remotes [:file :repl]}))
 
 (defn file-upload [ui]
   (dom/input
@@ -219,32 +226,47 @@
 
 (defui RootComponent
   static om/IQueryParams
-  (params [_] {:file nil :idx nil :offset 0 :limit 50})
+  (params [_] {:file nil :repl-input "" :offset 0})
   static om/IQuery
   (query [this]
          '[:selected-idx :offset :limit
            ;;           :display/visible-packets
            :packets
+           (:packets/slice {:offset ?offset :limit 20})
+           :packets/count
+           (:repl/output {:repl/input ?repl-input})
            :file/results
            (:file/file {:file/file ?file})])
   Object
   (render [this]
-    (let [{:keys [file]} (om/get-params this)
+    (let [{:keys [file repl-input]} (om/get-params this)
           {:keys
-           [selected-idx limit offset results title packets]}
+           [selected-idx limit offset results output
+            slice count]}
           (om/props this)
 
-          packets-count (count packets)
+          packets slice
+          packets-count count
           last-idx (max 0 (dec packets-count))
           packet (when selected-idx
                    (nth packets (min last-idx selected-idx) nil))
           start (min offset last-idx)
           end (min (+ limit offset) last-idx)
           packets (subvec packets start end)]
+      (println "hi" (keys (om/props this)))
       (dom/div nil
         (dom/h1 nil "Demo parser")
-        (dom/p nil results)
         (file-upload this)
+        (dom/textarea
+         #js {:value repl-input
+              :onChange
+              (fn [e]
+                (let [new-value (-> e .-target .-value)]
+                  (om/update-query!
+                   this
+                   (fn [s] (assoc-in s [:params :repl-input] new-value)))))})
+        repl-input
+        output
         (when packets (dom/p nil (str "Loaded " packets-count " packets.")))
         (when file (file-view this results))
         (when packets
@@ -282,8 +304,6 @@
 (om/add-root! reconciler RootComponent (gdom/getElement "app"))
 
 (defn on-figwheel-reload [& args] (println "Figwheel reloaded!" args))
-
-
 
 
 ;; (defn process-loop [c]
