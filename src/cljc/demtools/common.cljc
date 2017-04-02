@@ -4,4 +4,3 @@
   "A function that is shared between clj and cljs"
   []
   (println "cljc!"))
-
