@@ -6,7 +6,8 @@
             [cljs.core.async :as async
              :refer [close! <! >! put! chan pub sub]]
             [cljsjs.fixed-data-table]
-            [demtools.demo :refer [parse]]
+            [demtools.demo :refer [parse-loop-async]]
+            [demtools.async-utils :as asyncu]
             [tf2demo])
   (:require-macros
    [cljs.core.async.macros :as asyncm :refer [go go-loop]]))
@@ -21,6 +22,7 @@
 
 (def app-state
   (atom {:packets nil
+         :header nil
          :repl/input ""
          :repl/output ""
          :selected-idx nil
@@ -59,12 +61,13 @@
 
 (defmethod read "packets"
   [{:keys [state ast] :as env} k {:keys [idx offset limit]}]
+;;  (println "read k" k (-> @state :packets count) (case k :packets/count "coun" "else"))
   (case k
     :packets/packet
     {:value (nth (get @state :packets) idx)}
 
     :packets/count
-    {:value (count (get @state :packets))}
+    {:value (-> @state :packets count)}
 
     :packets/slice
     (let [packets (get @state :packets)]
@@ -82,16 +85,17 @@
              (when (not= old-file file) {:file ast})))))
 
 (defn mutate [{:keys [state] :as env} key {:keys [value]}]
+  ;;  (println "mutaatin" key (type key) value (-> key name keyword))
   (cond
     #{`selected-idx `offset}
     (let [state-key (-> key name keyword)]
       {:value {:keys [state-key]}
        :action #(swap! state assoc state-key value)})
 
-    #{`packets}
-    (let [state-key (-> key name keyword)]
-      {:value {:keys [state-key]}
-       :action #(swap! state assoc state-key value)})
+    ;;    #{`packets}
+    ;;    (let [state-key (-> key name keyword)]
+    ;;      {:value {:keys [state-key]}
+    ;;       :action #(swap! state assoc state-key value)})
 
     true {:value (swap! state assoc key value)}))
 
@@ -106,6 +110,15 @@
             query (get-in repl [:params :repl/input])]
         (put! c [:repl [query cb]])))))
 
+(defn aggregate-chan [])
+
+(defn file->buf [f]
+  (let [output (chan)
+        fr (js/FileReader.)]
+    (set! (.-onload fr) #(put! output (.-result fr)))
+    (.readAsArrayBuffer fr f)
+    output))
+
 (defn file-process-loop [control-chan]
   (go-loop [current-cb nil
             current-file nil
@@ -117,10 +130,20 @@
         (let [[data cb] m]
           (let [file data]
             (if (and file (not= file current-file))
-              (do (when current-parse-chan (close! current-parse-chan))
-                  (cb {:packets []})
-                  (recur cb file (when file (parse file)) []))
-              (recur current-cb current-file current-parse-chan current-packets))))
+              (do
+                (when current-parse-chan (close! current-parse-chan))
+                (cb {:packets []})
+
+                (let [buf (<! (file->buf file))
+                      demo (js/tf2demo.Demo. buf)
+                      parser (.getParser demo)
+                      parse-chan (chan)]
+                  (cb {:header (js->clj (.readHeader parser)
+                                        :keywordize-keys true)})
+                  (parse-loop-async parser parse-chan)
+                  (recur cb file (when file parse-chan) [])))
+              (recur current-cb current-file
+                     current-parse-chan current-packets))))
 
         (= port current-parse-chan)
         (do
@@ -162,12 +185,29 @@
 (file-process-loop file-chan)
 (sub router :file file-chan)
 
+(defn combine-merge [a b]
+  {:keys (concat (:keys a) (:keys b))
+   :next (merge (:next a) (:next b))
+   :tempids (concat (:tempids a) (:tempids b))})
+
+(defn merge-packets [state new-packets]
+  {:keys [:packets :packets/count :packets/slice]
+   :next (assoc state :packets new-packets)})
+
+(defn our-merge [reconciler state novelty query]
+  (let [{:keys [packets]} novelty
+        other-novelty (dissoc novelty :packets)
+        results (om/default-merge reconciler state other-novelty query)]
+    (if packets
+      (combine-merge results (merge-packets state packets))
+      results)))
+
 (def reconciler
   (om/reconciler
    {:state app-state
     :parser (om/parser {:read read :mutate mutate})
     :send (send-to-chan send-chan)
-    ;;    :merge our-merge
+    :merge our-merge
     :remotes [:file :repl]}))
 
 (defn file-upload [ui]
@@ -229,9 +269,7 @@
   (params [_] {:file nil :repl-input "" :offset 0})
   static om/IQuery
   (query [this]
-         '[:selected-idx :offset :limit
-           ;;           :display/visible-packets
-           :packets
+         '[:selected-idx :offset :limit :header
            (:packets/slice {:offset ?offset :limit 20})
            :packets/count
            (:repl/output {:repl/input ?repl-input})
@@ -240,20 +278,21 @@
   Object
   (render [this]
     (let [{:keys [file repl-input]} (om/get-params this)
-          {:keys
-           [selected-idx limit offset results output
-            slice count]}
-          (om/props this)
 
-          packets slice
-          packets-count count
+          props (om/props this)
+          {:keys [header selected-idx limit offset results output]} props
+
+          packets-count (:packets/count props)
+          packets (:packets/slice props)
+
+          all-packets [] ;;(get (om/props this) :packets nil)
+
           last-idx (max 0 (dec packets-count))
           packet (when selected-idx
                    (nth packets (min last-idx selected-idx) nil))
           start (min offset last-idx)
           end (min (+ limit offset) last-idx)
           packets (subvec packets start end)]
-      (println "hi" (keys (om/props this)))
       (dom/div nil
         (dom/h1 nil "Demo parser")
         (file-upload this)
@@ -267,8 +306,17 @@
                    (fn [s] (assoc-in s [:params :repl-input] new-value)))))})
         repl-input
         output
-        (when packets (dom/p nil (str "Loaded " packets-count " packets.")))
+        (when packets
+          (dom/p nil
+                 (str "Loaded " packets-count
+                      "(" (str (cljs.core/count all-packets)) ") packets.")))
         (when file (file-view this results))
+        (when header
+          (str "Name: " (:nick header)
+               " Map: " (:map header)
+               " Duration: " (:duration header)
+               " Ticks: " (:ticks header)
+               " Frames: " (:frames header)))
         (when packets
           (jsx Table
                #js {:rowHeight 32
@@ -343,21 +391,3 @@
 ;;         (cb {:file/results (str "some file contents: " (when file (.-name file)))
 ;;              :packets []}))
 ;;       (recur file))))
-
-
-;; (defn combine-merge-result [a b]
-;;   {:keys (concat (:keys a) (:keys b))
-;;    :next (merge (:next a) (:next b))
-;;    :tempids (concat (:tempids a) (:tempids b))})
-
-;; (defn merge-packets [state new-packets]
-;;   {:keys [:packets]
-;;    :next (update state :packets #(vec (concat % new-packets)))})
-
-;; (defn our-merge [reconciler state novelty query]
-;;   (let [{:keys [partial-packets]} novelty
-;;         other-novelty (dissoc novelty :partial-packets)
-;;         results (om/default-merge reconciler state other-novelty query)]
-;;     (if partial-packets
-;;       (combine-merge-result results (merge-packets state partial-packets))
-;;       results)))

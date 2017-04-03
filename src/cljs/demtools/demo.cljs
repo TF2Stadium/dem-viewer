@@ -61,21 +61,3 @@
             (fn [result]
               (when result
                 (setImmediate #(parse-loop-async parser output-chan))))))))
-
-;; demo -> channel of packets
-(defn parse [file]
-  (let [output (chan)
-        fr (js/FileReader.)]
-
-    (set!
-     (.-onload fr)
-     (fn []
-       (let [buf (.-result fr)
-             demo (js/tf2demo.Demo. buf)
-             parser (.getParser demo)
-             header (.readHeader parser)]
-         (js/console.log header)
-         (parse-loop-async parser output))))
-
-    (.readAsArrayBuffer fr file)
-    output))
