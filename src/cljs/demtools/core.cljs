@@ -1,6 +1,10 @@
 (ns demtools.core
   (:require [om.next :as om :refer-macros [defui]]
             [om.dom :as dom]
+            [cljs.reader :as reader]
+            [cljs.js :refer [empty-state eval js-eval]]
+            [cljs.pprint :refer [pprint]]
+            [net.cgrand.xforms :as x]
             [goog.dom :as gdom]
             [clojure.string :as str]
             [cljs.core.async :as async
@@ -23,6 +27,7 @@
 (def app-state
   (atom {:packets nil
          :header nil
+         :parser-state "nothing-loaded"
          :repl/input ""
          :repl/output ""
          :selected-idx nil
@@ -52,19 +57,29 @@
 
     (direct-read state k)))
 
+(defn read-expr [s]
+  (if-let [src (try (reader/read-string s)
+                    (catch :default e nil))]
+    (eval (empty-state)
+          src
+          {:eval       js-eval
+           :source-map true
+           :context    :expr}
+          (fn [result] (:value result)))))
+
 (defmethod read "repl"
   [{:keys [state ast] :as env} k {:keys [:repl/input] :as data}]
   (case k
     :repl/output
     (let [old-value (get @state k "Loading...")]
-      {:value old-value :repl ast})))
+      {:value (read-expr input)})))
 
 (defmethod read "packets"
   [{:keys [state ast] :as env} k {:keys [idx offset limit]}]
-;;  (println "read k" k (-> @state :packets count) (case k :packets/count "coun" "else"))
+  ;;  (println "read k" k (-> @state :packets count) (case k :packets/count "coun" "else"))
   (case k
     :packets/packet
-    {:value (nth (get @state :packets) idx)}
+    {:value (when idx (nth (get @state :packets) idx))}
 
     :packets/count
     {:value (-> @state :packets count)}
@@ -126,6 +141,13 @@
             current-packets nil]
     (let [[m port] (alts! (remove nil? [control-chan current-parse-chan]))]
       (cond
+        (nil? m)
+        (cond
+          (= port current-parse-chan)
+          (do
+            (current-cb {:parser-state "done"})
+            (recur current-cb current-file nil current-packets)))
+
         (= port control-chan)
         (let [[data cb] m]
           (let [file data]
@@ -137,17 +159,23 @@
                 (let [buf (<! (file->buf file))
                       demo (js/tf2demo.Demo. buf)
                       parser (.getParser demo)
-                      parse-chan (chan)]
-                  (cb {:header (js->clj (.readHeader parser)
+
+                      parse-chan
+                      (chan
+                       1 (comp
+                          (map (partial filter #(= "packetEntities" (aget % "packetType"))))
+                          (x/reductions into [])))]
+                  (cb {:parser-state "parsing"
+                       :header (js->clj (.readHeader parser)
                                         :keywordize-keys true)})
                   (parse-loop-async parser parse-chan)
-                  (recur cb file (when file parse-chan) [])))
+                  (recur cb file parse-chan [])))
               (recur current-cb current-file
                      current-parse-chan current-packets))))
 
         (= port current-parse-chan)
         (do
-          (let [new-packets (into current-packets m)]
+          (let [new-packets m]
             (current-cb {:packets new-packets})
             (recur current-cb
                    current-file
@@ -264,35 +292,34 @@
          (packet-view row)
          "")))))
 
+(defn set-param! [this k val]
+  (om/update-query! this (fn [s] (assoc-in s [:params k] val))))
+
 (defui RootComponent
   static om/IQueryParams
-  (params [_] {:file nil :repl-input "" :offset 0})
+  (params [_] {:file nil :repl-input ""
+               :offset 0 :selected-idx nil})
   static om/IQuery
   (query [this]
-         '[:selected-idx :offset :limit :header
-           (:packets/slice {:offset ?offset :limit 20})
+         '[:limit :header :parser-state
+           (:packets/packet {:idx ?selected-idx})
+           (:packets/slice {:offset ?offset :limit 40})
            :packets/count
            (:repl/output {:repl/input ?repl-input})
            :file/results
            (:file/file {:file/file ?file})])
   Object
   (render [this]
-    (let [{:keys [file repl-input]} (om/get-params this)
+    (let [{:keys [file repl-input offset selected-idx]} (om/get-params this)
 
           props (om/props this)
-          {:keys [header selected-idx limit offset results output]} props
+          {:keys [header limit results parser-state
+                  repl/output
+                  packets/packet]} props
 
           packets-count (:packets/count props)
-          packets (:packets/slice props)
-
-          all-packets [] ;;(get (om/props this) :packets nil)
-
-          last-idx (max 0 (dec packets-count))
-          packet (when selected-idx
-                   (nth packets (min last-idx selected-idx) nil))
-          start (min offset last-idx)
-          end (min (+ limit offset) last-idx)
-          packets (subvec packets start end)]
+          packets (:packets/slice props)]
+      (js/console.log "rerender")
       (dom/div nil
         (dom/h1 nil "Demo parser")
         (file-upload this)
@@ -305,11 +332,9 @@
                    this
                    (fn [s] (assoc-in s [:params :repl-input] new-value)))))})
         repl-input
-        output
         (when packets
           (dom/p nil
-                 (str "Loaded " packets-count
-                      "(" (str (cljs.core/count all-packets)) ") packets.")))
+                 (str "Loaded " packets-count " packets. " parser-state)))
         (when file (file-view this results))
         (when header
           (str "Name: " (:nick header)
@@ -317,32 +342,31 @@
                " Duration: " (:duration header)
                " Ticks: " (:ticks header)
                " Frames: " (:frames header)))
-        (when packets
-          (jsx Table
-               #js {:rowHeight 32
-                    :headerHeight 32
-                    :rowsCount packets-count
-                    :onScrollStart
-                    (fn [x y]
-                      (let [new-offset (max 0 (- (int (/ y 32)) 10))]
-                        (om/transact! this `[(offset {:value ~new-offset})])))
-                    :onScrollEnd
-                    (fn [x y]
-                      (let [new-offset (max 0 (- (int (/ y 32)) 10))]
-                        (om/transact! this `[(offset {:value ~new-offset})])))
-                    :onRowClick
-                    (fn [_ new-idx]
-                      (om/transact! this `[(selected-idx {:value ~new-idx})]))
-                    :width 800
-                    :height 800}
-               (jsx Column
-                    #js {:width 150
-                         :header (jsx Cell #js {} "Packet Type")
-                         :cell (packet-type-cell offset packets)})
-               (jsx Column
-                    #js {:width (- 800 150)
-                         :header (jsx Cell #js {} "Data")
-                         :cell (data-cell offset packets)})))
+        (jsx Table
+             #js {:rowHeight 32
+                  :headerHeight 32
+                  :rowsCount packets-count
+                  :onScrollStart
+                  (fn [x y]
+                    (let [new-offset (max 0 (- (int (/ y 32)) 10))]
+                      (set-param! this :offset new-offset)))
+                  :onScrollEnd
+                  (fn [x y]
+                    (let [new-offset (max 0 (- (int (/ y 32)) 10))]
+                      (set-param! this :offset new-offset)))
+                  :onRowClick
+                  (fn [_ new-idx] (set-param! this :selected-idx new-idx))
+                  :width 800
+                  :height 800}
+             (jsx Column
+                  #js {:width 150
+                       :header (jsx Cell #js {} "Packet Type")
+                       :cell (packet-type-cell offset packets)})
+             (jsx Column
+                  #js {:width (- 800 150)
+                       :header (jsx Cell #js {} "Data")
+                       :cell (data-cell offset packets)}))
+        (when output (str "Repl output: " (with-out-str (pprint output))))
         (when packet
           (dom/div nil (js/JSON.stringify packet)))))))
 

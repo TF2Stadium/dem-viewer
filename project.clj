@@ -8,6 +8,7 @@
                  [org.clojure/clojurescript "1.9.473" :scope "provided"]
                  [org.clojure/core.async "0.3.441"]
                  [com.cognitect/transit-clj "0.8.297"]
+                 [net.cgrand/xforms "0.9.2"]
                  [ring "1.5.0"]
                  [ring/ring-defaults "0.2.1"]
                  [bk/ring-gzip "0.1.1"]

@@ -34,6 +34,8 @@
     (when msg
       (let [packets (when (.-parse msg) (.parse msg))]
         (doseq [p packets] (.emit parser "packet" p))
+        (when packets
+          (.map packets (fn [p] (js-delete p "tables"))))
         packets))))
 
 ;; parse the next messages to get at least n packets (may return more than
@@ -47,6 +49,7 @@
             (doseq [p packets]
               (aset chunk @idx p)
               (swap! idx inc))
+;;             (println "loopin loopin" @idx n (not packets) (and packets (< @idx n)))
             (if (and packets (< @idx n))
               (recur)
               @idx)))]
@@ -60,4 +63,15 @@
       (put! output-chan packets
             (fn [result]
               (when result
-                (setImmediate #(parse-loop-async parser output-chan))))))))
+                (println (count packets) parse-chunk-size (>= (count packets) parse-chunk-size))
+  ;;              (setImmediate #(parse-loop-async parser output-chan))
+
+            ;;    (if (>= (count packets) parse-chunk-size)
+                  (setImmediate #(parse-loop-async parser output-chan))
+              ;;    )
+
+;;                 (if (>= (count packets) parse-chunk-size)
+;;                   (setImmediate #(parse-loop-async parser output-chan))
+;;                   (close! output-chan))
+
+                ))))))
