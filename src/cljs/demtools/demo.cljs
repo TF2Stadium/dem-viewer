@@ -5,25 +5,6 @@
   (:require-macros
    [cljs.core.async.macros :as asyncm :refer [go go-loop]]))
 
-(def obj-proto (js/Object.getPrototypeOf #js {}))
-
-(extend-type js/tf2demo.PacketEntity
-  IEncodeClojure
-  (-js->clj [x opts]
-    (js/Object.setPrototypeOf x obj-proto)
-    ))
-
-;; (extend-type js/tf2demo.SendProp
-;;   IEncodeClojure
-;;   (-js->clj [x opts] (h/plainify x)))
-;; (extend-type js/tf2demo.SendPropDefinition
-;;   IEncodeClojure
-;;   (-js->clj [x opts] (h/plainify x)))
-;; (extend-type js/tf2demo.ServerClass
-;;   IEncodeClojure
-;;   (-js->clj [x opts] (h/plainify x)))
-
-
 (defn setImmediate [fn] (js/setTimeout fn 50))
 
 ;; parse the next message, return a list of packets; or nil if we're done
@@ -36,7 +17,7 @@
         (doseq [p packets] (.emit parser "packet" p))
         (when packets
           (.map packets (fn [p] (js-delete p "tables"))))
-        packets))))
+        (or packets (when msg []))))))
 
 ;; parse the next messages to get at least n packets (may return more than
 ;; the requested n packets), or until end of parser
@@ -49,7 +30,6 @@
             (doseq [p packets]
               (aset chunk @idx p)
               (swap! idx inc))
-;;             (println "loopin loopin" @idx n (not packets) (and packets (< @idx n)))
             (if (and packets (< @idx n))
               (recur)
               @idx)))]
@@ -63,15 +43,6 @@
       (put! output-chan packets
             (fn [result]
               (when result
-                (println (count packets) parse-chunk-size (>= (count packets) parse-chunk-size))
-  ;;              (setImmediate #(parse-loop-async parser output-chan))
-
-            ;;    (if (>= (count packets) parse-chunk-size)
+                (if (>= (count packets) parse-chunk-size)
                   (setImmediate #(parse-loop-async parser output-chan))
-              ;;    )
-
-;;                 (if (>= (count packets) parse-chunk-size)
-;;                   (setImmediate #(parse-loop-async parser output-chan))
-;;                   (close! output-chan))
-
-                ))))))
+                  (close! output-chan))))))))
