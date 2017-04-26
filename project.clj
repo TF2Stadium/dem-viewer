@@ -104,7 +104,6 @@
                 :pretty-print false
                 :optimize-constants true
                 :static-fns true
-                :pretty-print false
                 :language-in :ecmascript5
                 :language-out :ecmascript5
                 :externs ["demojs-externs.js"]
