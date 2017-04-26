@@ -43,19 +43,7 @@
 (defmulti read (fn [& args] (namespace (apply om/dispatch args))))
 (defn direct-read [state k] {:value (get @state k nil)})
 (defmethod read nil [{:keys [state] :as env} k {:keys [idx file offset limit]}]
-  (case k
-    ;;    :visible-packets
-
-    ;;     :packets
-    ;;     (let [packets (or (get @state :packets []) [])
-    ;;           last-idx (max 0 (dec (count packets)))
-    ;;           start (min offset last-idx)
-    ;;           end (min (+ limit offset) last-idx)]
-    ;;       {:value (subvec packets start end)})
-    ;;     :packet (when idx {:value (get (get @state :packets []) idx)})
-    ;;     :packets-count {:value (count (get @state :packets))}
-
-    (direct-read state k)))
+  (case k (direct-read state k)))
 
 (defn read-expr [s]
   (if-let [src (try (reader/read-string s)
@@ -99,18 +87,11 @@
              (when (not= old-file file) {:file ast})))))
 
 (defn mutate [{:keys [state] :as env} key {:keys [value]}]
-  ;;  (println "mutaatin" key (type key) value (-> key name keyword))
   (cond
     #{`selected-idx `offset}
     (let [state-key (-> key name keyword)]
       {:value {:keys [state-key]}
        :action #(swap! state assoc state-key value)})
-
-    ;;    #{`packets}
-    ;;    (let [state-key (-> key name keyword)]
-    ;;      {:value {:keys [state-key]}
-    ;;       :action #(swap! state assoc state-key value)})
-
     true {:value (swap! state assoc key value)}))
 
 (defn send-to-chan [c]
@@ -376,42 +357,3 @@
 (om/add-root! reconciler RootComponent (gdom/getElement "app"))
 
 (defn on-figwheel-reload [& args] (println "Figwheel reloaded!" args))
-
-
-;; (defn process-loop [c]
-;;   (go-loop [current-file nil]
-;;     (let [[file cb] (<! c)]
-;;       (when (not= file current-file)
-;;         (when file
-;;           (let [fr (js/FileReader.)]
-;;             (set!
-;;              (.-onload fr)
-;;              (fn []
-;;                (let [buf (.-result fr)
-;;                      dem (js/tf2demo.Demo. buf)
-;;                      parser (.getParser dem)
-;;                      packets (js/Array. 50000)
-;;                      idx (atom 0)]
-;;                  (.on parser "packet"
-;;                       #(let [i @idx]
-;;                          (when (< i 3000)
-;;                            (aset packets @idx %)
-;;                            (swap! idx inc))))
-;;                  (.readHeader parser)
-;;                  (.parseBody parser)
-
-;;                  (when (< @idx (.-length packets))
-;;                    (set! (.-length packets) @idx))
-
-;;                  (let [p (js->clj packets)
-;;                        x (js/console.log "done converting" (count p))]
-;;                    (cb {:file/results (str "some file contents: "
-;;                                            (.-name file)
-;;                                            (.-byteLength buf)
-;;                                            " "
-;;                                            (.-length packets))
-;;                         :partial-packets p})))))
-;;             (.readAsArrayBuffer fr file)))
-;;         (cb {:file/results (str "some file contents: " (when file (.-name file)))
-;;              :packets []}))
-;;       (recur file))))
