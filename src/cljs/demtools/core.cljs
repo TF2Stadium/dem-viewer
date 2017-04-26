@@ -56,20 +56,29 @@
           (fn [result] (:value result)))))
 
 (defmethod read "repl"
-  [{:keys [state ast] :as env} k {:keys [:repl/input] :as data}]
+  [{:keys [state ast] :as env} k {:keys [:repl/input :repl/packets] :as data}]
   (case k
     :repl/output
     (let [old-value (get @state k "Loading...")]
+      (js/console.log "hi" "from" input (count (:packets @state)))
       {:value (read-expr input)})))
 
 (defmethod read "packets"
-  [{:keys [state ast] :as env} k {:keys [idx offset limit]}]
+  [{:keys [state ast] :as env} k {:keys [idx offset limit repl-input]}]
   (case k
     :packets/packet
     {:value (when idx (nth (get @state :packets) idx))}
 
     :packets/count
     {:value (-> @state :packets count)}
+
+    :packets/repl-output
+    (let [x (read-expr repl-input)]
+      {:value
+       (if (fn? x)
+         (into [] x (:packets @state))
+         x)})
+
 
     :packets/slice
     (let [packets (get @state :packets)]
@@ -285,6 +294,7 @@
          '[:limit :header :parser-state
            (:packets/packet {:idx ?selected-idx})
            (:packets/slice {:offset ?offset :limit 40})
+           (:packets/repl-output {:repl-input ?repl-input})
            :packets/count
            (:repl/output {:repl/input ?repl-input})
            :file/results
@@ -296,7 +306,8 @@
           props (om/props this)
           {:keys [header limit results parser-state
                   repl/output
-                  packets/packet]} props
+                  packets/packet
+                  packets/repl-output]} props
 
           packets-count (:packets/count props)
           packets (:packets/slice props)]
@@ -312,7 +323,6 @@
                   (om/update-query!
                    this
                    (fn [s] (assoc-in s [:params :repl-input] new-value)))))})
-        repl-input
         (when packets
           (dom/p nil
                  (str "Loaded " packets-count " packets. " parser-state)))
@@ -349,9 +359,12 @@
                   #js {:width (- 800 150)
                        :header (jsx Cell #js {} "Data")
                        :cell (data-cell offset packets)}))
-        (when output (str "Repl output: " (with-out-str (pprint output))))
+        (when repl-output
+          (str "Packet repl output: " (with-out-str (pprint repl-output))))
         (when packet
-          (dom/div nil (js/JSON.stringify packet)))))))
+          (dom/div nil
+            (dom/h2 "Packet")
+            (js/JSON.stringify packet)))))))
 
 
 (def root (om/factory RootComponent))
