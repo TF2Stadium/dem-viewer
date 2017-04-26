@@ -100,7 +100,10 @@
                 :output-to "resources/public/js/compiled/demtools.js"
                 :output-dir "target/min/"
                 :source-map-timestamp true
-                :optimizations :advanced
+                :optimizations :simple
+                :pretty-print false
+                :optimize-constants true
+                :static-fns true
                 :pretty-print false
                 :language-in :ecmascript5
                 :language-out :ecmascript5
