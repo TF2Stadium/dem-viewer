@@ -76,7 +76,6 @@
 
 (defmethod read "packets"
   [{:keys [state ast] :as env} k {:keys [idx offset limit]}]
-  ;;  (println "read k" k (-> @state :packets count) (case k :packets/count "coun" "else"))
   (case k
     :packets/packet
     {:value (when idx (nth (get @state :packets) idx))}
@@ -241,6 +240,7 @@
 (defn file-upload [ui]
   (dom/input
    #js {:type "file"
+        :value ""
         :onChange #(let [f (-> % .-target .-files js/Array.from (nth 0))]
                      (om/update-query!
                       ui
