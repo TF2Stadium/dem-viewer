@@ -36,9 +36,9 @@
          :offset 0
          :file/results ""}))
 
-(def w (js/Worker. "js/compiled/demtools-worker.js"))
-(set! (.-onmessage w)
-      (fn [& e] (js/console.log "received" e)))
+;;(def w (js/Worker. "js/compiled/demtools-worker.js"))
+;;(set! (.-onmessage w)
+;;      (fn [& e] (js/console.log "received" e)))
 
 (defmulti read (fn [& args] (namespace (apply om/dispatch args))))
 (defn direct-read [state k] {:value (get @state k nil)})
@@ -370,3 +370,9 @@
 (om/add-root! reconciler RootComponent (gdom/getElement "app"))
 
 (defn on-figwheel-reload [& args] (println "Figwheel reloaded!" args))
+
+
+
+(comp
+ (filter #(not= "packetEntities" (aget % "packetEntities")))
+ (take 10))
