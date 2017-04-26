@@ -326,7 +326,9 @@
         (jsx Table
              #js {:rowHeight 32
                   :headerHeight 32
-                  :rowsCount packets-count
+
+                  ;; frames count includes header, so dec 1
+                  :rowsCount (if header (dec (:frames header)) 0)
                   :onScrollStart
                   (fn [x y]
                     (let [new-offset (max 0 (- (int (/ y 32)) 10))]
