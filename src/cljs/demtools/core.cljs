@@ -363,7 +363,7 @@
           (str "Packet repl output: " (with-out-str (pprint repl-output))))
         (when packet
           (dom/div nil
-            (dom/h2 "Packet")
+            (dom/h2 nil "Packet")
             (js/JSON.stringify packet)))))))
 
 
