@@ -60,7 +60,6 @@
   (case k
     :repl/output
     (let [old-value (get @state k "Loading...")]
-      (js/console.log "hi" "from" input (count (:packets @state)))
       {:value (read-expr input)})))
 
 (defmethod read "packets"
@@ -311,7 +310,6 @@
 
           packets-count (:packets/count props)
           packets (:packets/slice props)]
-      (js/console.log "rerender")
       (dom/div nil
         (dom/h1 nil "Demo parser")
         (file-upload this)
