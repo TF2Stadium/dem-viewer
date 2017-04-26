@@ -5,7 +5,7 @@
   (:require-macros
    [cljs.core.async.macros :as asyncm :refer [go go-loop]]))
 
-(defn setImmediate [fn] (js/setTimeout fn 50))
+(defn setImmediate [fn] (js/setTimeout fn 16))
 
 ;; parse the next message, return a list of packets; or nil if we're done
 (defn parse-1 [parser]
