@@ -151,7 +151,7 @@
                       parse-chan
                       (chan
                        1 (comp
-                          (map (partial filter #(= "packetEntities" (aget % "packetType"))))
+                          (map (aget % "packetType")))
                           (x/reductions into [])))]
                   (cb {:parser-state "parsing"
                        :header (js->clj (.readHeader parser)
