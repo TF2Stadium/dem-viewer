@@ -149,10 +149,7 @@
                       parser (.getParser demo)
 
                       parse-chan
-                      (chan
-                       1 (comp
-                          (map (aget % "packetType")))
-                          (x/reductions into [])))]
+                      (chan 1 (x/reductions into []))]
                   (cb {:parser-state "parsing"
                        :header (js->clj (.readHeader parser)
                                         :keywordize-keys true)})
